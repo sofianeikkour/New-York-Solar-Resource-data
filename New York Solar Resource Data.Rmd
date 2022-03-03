@@ -1,0 +1,203 @@
+---
+title: "New York Solar Resource data"
+author: "Sofiane Ikkour"
+output: html_document
+---
+
+### **Context:**  
+
+In this use case, we'll work with [Solar Resource Data](https://developer.nrel.gov/docs/solar/solar-resource-v1/) which returns various types of solar data for a location. The location here is the city of New York. We will use application programming interfaces (APIs) from a [Web service documentation](https://api.data.gov/docs/) to access and manipulate many federal agencies's datasets with information about the United States that covers several topics.  
+
+### **Goal:** 
+
+Our goal is to use APIs to extract the solar resource data for New York City in JSON format and convert it into a dataframe.   
+
+**Note:** This code was written on RStudio.  
+**Language:** R.  
+**Packages:** httr, jsonlite, tibble, dplyr, ggplot2.  
+
+**query the API**  
+
+The [Web service](https://api.data.gov/docs/) needs an access key. I got one using this [link](https://api.data.gov/signup/) after signing up for an API key to access and use web services available on the Data.gov developer network. The API key is "Ra7jcVZGuhjMsuyLhErfGQJIgFC0sJcfkaSvSRpV".
+
+```{r}
+# load the relevant libraries
+library(httr)
+library(jsonlite)
+library(tibble)
+library(dplyr)
+library(ggplot2)
+
+# store the api key in variable
+api_key <- "Ra7jcVZGuhjMsuyLhErfGQJIgFC0sJcfkaSvSRpV"
+
+# identify and store the url we'll need to extract the New York City Solar Resource Data in JSON format
+api_url <- "https://developer.nrel.gov/api/solar/solar_resource/v1.json"
+
+# store the following parameters api_key, lat (latitude = 41), lon (longitude = -75) in a list
+parameters_list <- list(api_key = api_key, lat = 41, lon = -75)
+```
+
+Now that we have identified the URL and the parameters we need to query the API. 
+
+```{r}
+# use GET() function to request the data from the API with url and parameters_list
+response <- GET(api_url, query = parameters_list)
+
+# display the status code
+status <- status_code(response)
+print(paste("Status code:", status))
+
+# display the API response format
+response_format <- http_type(response)
+print(paste("Response format:", response_format))
+
+# extract the API response content as text
+content <- content(response, "text")
+
+# display the content
+print("Content:")
+cat("\n")
+print(content)
+```
+
+The API response content is a JSON text that we will convert into an R object that we can manipulate.  
+
+**convert the API response into an R object**  
+
+```{r}
+# parse the API response content to an R object
+json_lists <- fromJSON(content)
+
+# display the structure of the R object
+str(json_lists)
+```
+
+After parsing the JSON data into an R object we got a complex list. We need to convert this list into a dataframe.  
+
+**convert json_lists into a dataframe**  
+
+```{r}
+# first, extract the 'outputs' list from the json_lists
+outputs_list <- json_lists$outputs
+
+# second, extract the monthly vector 'monthly' from the following lists: avg_dni, avg_ghi, avg_lat_tilt
+avg_dni_monthly <- as.numeric(outputs_list$avg_dni$monthly)
+avg_ghi_monthly <- as.numeric(outputs_list$avg_ghi$monthly)
+avg_lat_tilt_monthly <- as.numeric(outputs_list$avg_lat_tilt$monthly)
+
+# combine the monthly vectors in to a dataframe
+dataframe <- tibble("month" = month.abb, "avg_dni" = avg_dni_monthly, "avg_ghi" = avg_ghi_monthly, "avg_lat_tilt" = avg_lat_tilt_monthly)
+
+# display the dataframe
+head(dataframe, 10)
+```
+ 
+We can use a second approach in order to simplify the complex list and restructure it. 
+
+**convert a complex list into a dataframe - second approach**  
+
+```{r}
+# simplify the extracted 'outputs' list from the json_lists
+simplified_list <- unlist(outputs_list)
+
+# convert the simplified list into a matrix
+mat <- matrix(simplified_list, nrow = 13)
+
+# remove the first row (the annual values) from the matrix
+mat <- mat[-1,]
+
+# convert the matrix into a dataframe
+dataframe <- as.data.frame(mat)
+
+# display the dataframe
+head(dataframe, 12)
+```
+
+As we can see, the dataframe has three columns which have the right values we extracted from the json_lists using a different approach.  
+
+We can use the previous steps differently by creating a function that will allow us to extract data using this API.  
+
+**create a function to extract solar resource data**  
+
+```{r}
+# create a custom function named nrel_api_json_get_df() 
+nrel_api_json_get_fg <- function(endpoint, queries = list()) {
+  
+  # preparing the URL
+  url <- modify_url(url = "https://developer.nrel.gov", path = endpoint)
+  
+  # API requests
+  response <- GET(url, query = queries)
+  
+  # tracking errors
+  if (http_error(response)) {
+    print(status_code(response))
+    print(http_status(response))
+    stop("Something went wrong!", call. = FALSE)
+  }
+  
+  if (http_type(response) != "application/json") {
+    stop("API did not return json!", call. = FALSE)
+  }
+  
+  # extracting content
+  content <- content(response, "text")
+  
+  # parse the API content into an R object
+  json_lists <- fromJSON(content)
+  
+  # convert json_lists into a dataframe
+  dataframe <- tibble("month" = month.abb,
+                      "avg_dni" = as.numeric(json_lists$outputs$avg_dni$monthly),
+                      "avg_ghi" = as.numeric(json_lists$outputs$avg_ghi$monthly),
+                      "avg_lat_tilt" = as.numeric(json_lists$outputs$avg_lat_tilt$monthly))
+  
+  # returning the dataframe
+  return(dataframe)
+}
+
+# use the function to extract the solar resource data as a dataframe
+# store the result in a variable named solar_resource_df
+solar_resource_df <- nrel_api_json_get_fg("api/solar/solar_resource/v1.json", parameters_list)
+
+# display the dataframe
+solar_resource_df
+```
+
+We can now visualize the the New York City average direct solar irradiation for each month ordered alphabetically and chronologically. 
+
+**visualize the avg_dni**
+
+```{r}
+# plot for each month the average direct irradiation (avg_dni) from solar_resource_df
+ggplot(solar_resource_df, aes(x = month, y = avg_dni, group = 1)) +
+  geom_line(color = "blue") +
+  geom_point() +
+  labs(
+    title = "Average Direct Solar Irradiation",
+    x = "month",
+    y = "avg_dni"
+  ) +
+  theme_bw()
+```
+```{r}
+# convert the month column into a factor
+solar_resource_df <- solar_resource_df %>%
+  mutate(month = factor(month, levels = month.abb))
+
+# reproduce the same plot with these new settings
+ggplot(solar_resource_df, aes(x = month, y = avg_dni, group = 1)) +
+  geom_line(color = "blue") +
+  geom_point() +
+  labs(
+    title = "Average Direct Solar Irradiation",
+    x = "month",
+    y = "avg_dni"
+  ) +
+  theme_bw()
+```
+
+**Observations:**  
+- The average direct solar irradiation reaches the highest level around the month of July. This month corresponds to the summer season.  
+- After converting the month column into a factor, we can notice that the order of the months has changed. In the first plot months are ordered alphabetically and in the second plot the months are ordered chronologically.   
