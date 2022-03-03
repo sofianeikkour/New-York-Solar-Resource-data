@@ -1,0 +1,1 @@
+# New-York-Solar-Resource-data
